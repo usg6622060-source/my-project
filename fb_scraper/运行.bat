@@ -25,7 +25,11 @@ if not defined PY (
 echo [1/2] Checking Python packages...
 %PY% -m pip install -q --disable-pip-version-check -r requirements.txt
 if errorlevel 1 (
-    echo Default source failed, trying Tsinghua mirror...
+    echo.
+    echo Default source failed. Retrying via Tsinghua mirror, bypassing the system proxy...
+    rem Old pip fails on an https system proxy set by VPN tools, error: check_hostname requires server_hostname
+    rem NO_PROXY=* makes pip connect directly
+    set "NO_PROXY=*"
     %PY% -m pip install -q --disable-pip-version-check -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 )
 if errorlevel 1 (
@@ -34,6 +38,7 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
+set "NO_PROXY="
 
 echo [2/2] Running...
 %PY% main.py
