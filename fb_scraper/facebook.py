@@ -132,8 +132,27 @@ async def check_account(page, check_text=False):
                 raise AccountProblem(kind, f"页面提示：{pattern.search(text).group(0)}")
 
 
-async def goto(page, url, timeout_s):
-    await page.goto(url, wait_until="domcontentloaded", timeout=timeout_s * 1000)
+NET_ERROR_RE = re.compile(r"net::(ERR_[A-Z_]+)")
+
+
+async def goto(page, url, timeout_s, retries=3):
+    """打开网页。代理不稳时（ERR_TIMED_OUT、ERR_CONNECTION_RESET 等）自动重试，
+    重试完还不行就当作整个号连不上网。"""
+    for attempt in range(1, retries + 1):
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=timeout_s * 1000)
+            return
+        except Exception as e:
+            m = NET_ERROR_RE.search(str(e))
+            if not m:
+                raise
+            if attempt == retries:
+                raise AccountProblem(
+                    "网络连不上",
+                    f"这个窗口打不开 Facebook（{m.group(1)}），重试 {retries} 次都失败。"
+                    "请检查比特浏览器里这个窗口的代理/IP 是否可用",
+                ) from e
+            await asyncio.sleep(5 * attempt)
 
 
 async def dismiss_cookies(page, log):
