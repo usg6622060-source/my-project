@@ -23,6 +23,7 @@ NOT_A_NAME_RE = re.compile(
     r"^(\d+\+?\s+notifications?|notifications?|messages?|create post|promote|switch now|copy link|share)$",
     re.I,
 )
+PROFILE_PIC_RE = re.compile(r"^\s*profile (picture|photo) (for|of)\s+", re.I)
 UNAVAILABLE_RE = re.compile(
     r"this content isn.t available|this page isn.t available|content isn.t available right now",
     re.I,
@@ -43,7 +44,7 @@ JS_BODY_TEXT = "() => document.body ? document.body.innerText : ''"
 JS_PAGE_LINKS = """() => {
   const root = document.querySelector('[role="main"]') || document.body;
   return Array.from(root.querySelectorAll('a[href*="profile.php?id="]'))
-    .map(a => [a.href, (a.innerText || a.getAttribute('aria-label') || '').trim()]);
+    .map(a => [a.href, (a.innerText || '').trim(), (a.getAttribute('aria-label') || '').trim()]);
 }"""
 
 JS_HAS_PAGE_LINKS = """() => {
@@ -84,6 +85,11 @@ class PageProblem(Exception):
         super().__init__(f"{kind}：{detail}")
         self.kind = kind
         self.detail = detail
+
+
+def clean_name(text):
+    name = PROFILE_PIC_RE.sub("", (text or "").split("\n")[0]).strip()
+    return "" if NOT_A_NAME_RE.match(name) else name
 
 
 def public_page_url(page_id):
@@ -183,19 +189,21 @@ async def collect_pages(page, timeout_s, log):
     await check_account(page, check_text=True)
 
     found = {}  # id -> name，保持页面上的顺序
+    aria_names = {}
     stable = 0
     for _ in range(40):
         before = len(found)
-        for href, text in await page.evaluate(JS_PAGE_LINKS):
+        for href, text, aria in await page.evaluate(JS_PAGE_LINKS):
             m = PAGE_ID_RE.search(href)
             if not m:
                 continue
             pid = m.group(1)
-            name = text.split("\n")[0].strip()
-            if NOT_A_NAME_RE.match(name):
-                name = ""
+            name = clean_name(text)
             if pid not in found or (not found[pid] and name):
                 found[pid] = name
+            # 头像链接没有文字，只有 "Profile picture for xxx" 这种说明，只在实在没名字时才用
+            if not found[pid]:
+                aria_names.setdefault(pid, clean_name(PROFILE_PIC_RE.sub("", aria)))
         stable = stable + 1 if len(found) == before else 0
         if stable >= 3:
             break
@@ -205,7 +213,7 @@ async def collect_pages(page, timeout_s, log):
     main_text = await _text(page, JS_MAIN_TEXT)
     m = re.search(r"Pages (.+?) manages", main_text)
     account = m.group(1).strip() if m else ""
-    return account, list(found.items())
+    return account, [(pid, name or aria_names.get(pid, "")) for pid, name in found.items()]
 
 
 async def _is_on(switch):
@@ -322,7 +330,7 @@ async def read_page(page, page_id, list_name, timeout_s, log):
         raise PageProblem("主页不可用", "页面显示 This content isn't available（可能被限制或删除）")
 
     h1 = await _text(page, JS_H1)
-    name = list_name or (h1[0] if h1 else "")
+    name = clean_name(list_name) or (clean_name(h1[0]) if h1 else "")
 
     m = FOLLOWERS_RE.search(main_text)
     if not m:
