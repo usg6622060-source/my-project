@@ -200,13 +200,14 @@ def main():
 
     OUT.mkdir(exist_ok=True)
     (OUT / "日志").mkdir(exist_ok=True)
-    date_str = datetime.now().strftime("%m-%d")
+    today = datetime.now()
+    date_str = f"{today.month}月{today.day}"
     n = excel_out.next_run_number(OUT, date_str)
     run_name = f"{date_str}_第{n}次"
-    main_path = OUT / f"FB数据_{run_name}.xlsx"
-    problem_path = OUT / f"FB问题_{run_name}.xlsx"
+    main_path = OUT / f"{run_name}_FB数据.xlsx"
+    problem_path = OUT / f"{run_name}_FB问题.xlsx"
 
-    run = Run(s, OUT / "日志" / f"运行_{run_name}.txt", OUT / "调试" / run_name, OUT / "记录.json")
+    run = Run(s, OUT / "日志" / f"{run_name}_日志.txt", OUT / "调试" / run_name, OUT / "记录.json")
     run.log(f"===== 开始：{run_name}，达人id {s.talent_id}，同时开 {s.concurrency} 个窗口 =====")
 
     bb = BitBrowser(s.api_url, s.api_key)

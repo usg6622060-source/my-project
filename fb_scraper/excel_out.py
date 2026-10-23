@@ -12,7 +12,7 @@ PROBLEM_WIDTHS = [13, 20, 20, 24, 20, 16, 60, 18]
 
 def next_run_number(out_dir, date_str):
     n = 1
-    while (Path(out_dir) / f"FB数据_{date_str}_第{n}次.xlsx").exists():
+    while (Path(out_dir) / f"{date_str}_第{n}次_FB数据.xlsx").exists():
         n += 1
     return n
 
