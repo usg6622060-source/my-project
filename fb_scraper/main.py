@@ -94,7 +94,7 @@ async def process_window(pw, bb, win, run):
         tab.set_default_timeout(s.timeout_s * 1000)
 
         try:
-            account, pages = await fb.collect_pages(tab, s.timeout_s)
+            account, pages = await fb.collect_pages(tab, s.timeout_s, run.log)
         except fb.AccountProblem as e:
             account = e.account_name
             shot = await run.debug(tab, f"窗口{win['seq']}_{e.kind}")

@@ -46,6 +46,11 @@ JS_PAGE_LINKS = """() => {
     .map(a => [a.href, (a.innerText || a.getAttribute('aria-label') || '').trim()]);
 }"""
 
+JS_HAS_PAGE_LINKS = """() => {
+  const root = document.querySelector('[role="main"]') || document.body;
+  return !!root && !!root.querySelector('a[href*="profile.php?id="]');
+}"""
+
 JS_H1 = """() => {
   const root = document.querySelector('[role="main"]') || document.body;
   return Array.from(root.querySelectorAll('h1'))
@@ -125,19 +130,56 @@ async def goto(page, url, timeout_s):
     await page.goto(url, wait_until="domcontentloaded", timeout=timeout_s * 1000)
 
 
-async def collect_pages(page, timeout_s):
+async def dismiss_cookies(page, log):
+    """处理 "Allow the use of cookies from Facebook on this browser?"：点 Decline optional cookies。
+    选过一次之后这个窗口就不会再弹。"""
+    dialog = page.locator('[role="dialog"]').filter(
+        has_text=re.compile(r"use of cookies", re.I)
+    )
+    if not await dialog.count():
+        return False
+    dialog = dialog.last
+    button = dialog.get_by_role(
+        "button", name=re.compile(r"decline optional cookies|only allow essential cookies", re.I)
+    )
+    if not await button.count():
+        button = dialog.get_by_text(
+            re.compile(r"^\s*(decline optional cookies|only allow essential cookies)\s*$", re.I)
+        )
+    if not await button.count():
+        log("  ⚠ 出现 cookies 弹窗，但没找到 Decline optional cookies 按钮")
+        return False
+    await button.first.click()
+    try:
+        await dialog.wait_for(state="hidden", timeout=8000)
+    except Exception:
+        log("  ⚠ 点了 Decline optional cookies，但弹窗没消失")
+    log("  已关闭 cookies 弹窗（Decline optional cookies）")
+    return True
+
+
+async def wait_until(page, js, seconds, log):
+    """等页面准备好；等的过程中顺手关掉 cookies 弹窗。"""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + seconds
+    while True:
+        await dismiss_cookies(page, log)
+        try:
+            if await page.evaluate(js):
+                return True
+        except Exception:
+            pass
+        if loop.time() > deadline:
+            return False
+        await asyncio.sleep(1)
+
+
+async def collect_pages(page, timeout_s, log):
     """打开 "Pages xxx manages"，返回 (账号名, [(主页ID, 主页名称), ...])。"""
     await goto(page, YOUR_PAGES_URL, timeout_s)
     await asyncio.sleep(2)
     await check_account(page, check_text=True)
-    try:
-        await page.wait_for_selector(
-            '[role="main"] a[href*="profile.php?id="]',
-            state="attached",
-            timeout=min(20, timeout_s) * 1000,
-        )
-    except Exception:
-        pass
+    await wait_until(page, JS_HAS_PAGE_LINKS, min(20, timeout_s), log)
     await check_account(page, check_text=True)
 
     found = {}  # id -> name，保持页面上的顺序
@@ -247,6 +289,7 @@ async def exact_followers(page, page_id, approx, step, timeout_s, log):
         try:
             await goto(page, url, timeout_s)
             await check_account(page)
+            await dismiss_cookies(page, log)
             try:
                 await page.wait_for_load_state("networkidle", timeout=20000)
             except Exception:
@@ -268,12 +311,10 @@ async def read_page(page, page_id, list_name, timeout_s, log):
     """返回 {'name', 'followers', 'approx_text'}；approx_text 非空表示只拿到约数。"""
     await goto(page, f"{FB}/profile.php?id={page_id}", timeout_s)
     await check_account(page)
-    try:
-        await page.wait_for_function(JS_PAGE_READY, timeout=min(25, timeout_s) * 1000)
-    except Exception:
-        pass
+    await wait_until(page, JS_PAGE_READY, min(25, timeout_s), log)
     await asyncio.sleep(1.5)
     await check_account(page)
+    await dismiss_cookies(page, log)
     await dismiss_welcome(page, log)
 
     main_text = await _text(page, JS_MAIN_TEXT)
