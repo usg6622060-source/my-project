@@ -53,7 +53,8 @@ def _row(today, page_rows):
     new_counts = [p["new_count"] for p in page_rows if p["new_count"] is not None]
     return (
         [today, len(page_rows), sum(p["followers"] or 0 for p in page_rows), count]
-        + buckets
+        # 每档写成 "12（30.0%）"，百分比 = 这一档的视频数 / 检测视频数
+        + [f"{b}（{b / count * 100:.1f}%）" if count else b for b in buckets]
         + [
             total,
             round(total / count, 1) if count else None,
