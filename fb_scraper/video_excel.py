@@ -1,5 +1,5 @@
 """视频播放量统计表：一个文件一直累加，每个检测日期一行（所有主页加起来），同一天只保留最后一次。"""
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from openpyxl import Workbook, load_workbook
@@ -15,7 +15,7 @@ HEADERS = (
     + BUCKET_NAMES
     + ["总播放量", "平均播放量", "比上次", "最高播放量", "最高播放量的主页", "新增视频数", "没读到播放量的视频数"]
 )
-WIDTHS = {"检测日期": 12, "最高播放量的主页": 48}
+WIDTHS = {"检测日期": 18, "最高播放量的主页": 48}
 
 GREEN = (PatternFill("solid", fgColor="C6EFCE"), Font(color="006100"))
 RED = (PatternFill("solid", fgColor="FFC7CE"), Font(color="9C0006"))
@@ -71,7 +71,8 @@ def write(path, page_rows):
     """page_rows: [dict(page_name, page_id, followers, stats, new_count), ...]
     返回实际保存的文件路径（原文件被 Excel 占用时会另存一份）。"""
     path = Path(path)
-    today = datetime.now().strftime("%Y-%m-%d")
+    now = datetime.now(timezone(timedelta(hours=8)))  # 北京时间，不管电脑设的哪个时区
+    today = now.strftime("%Y-%m-%d")
     if path.exists():
         wb = load_workbook(path)
     else:
@@ -81,17 +82,17 @@ def write(path, page_rows):
 
     # 同一天只保留最后一次
     for r in range(ws.max_row, 1, -1):
-        if str(ws.cell(row=r, column=1).value) == today:
+        if str(ws.cell(row=r, column=1).value)[:10] == today:
             ws.delete_rows(r)
 
     prev = None  # 今天之前最近一次的平均播放量
     for row in ws.iter_rows(min_row=2, values_only=True):
-        if row[0] and str(row[0]) < today and row[AVG] is not None:
+        if row[0] and str(row[0])[:10] < today and row[AVG] is not None:
             if prev is None or str(row[0]) >= prev[0]:
                 prev = (str(row[0]), row[AVG])
     prev = prev[1] if prev else None
 
-    values = _row(today, page_rows)
+    values = _row(now.strftime("%Y-%m-%d %H:%M"), page_rows)
     avg = values[AVG]
     if prev is not None and avg is not None:
         values[DIFF] = round(avg - prev, 1)
