@@ -155,6 +155,16 @@ async def goto(page, url, timeout_s, retries=3):
             await asyncio.sleep(5 * attempt)
 
 
+async def lighten(page):
+    """不加载图片、视频、字体：页面照样能读文字，CPU 和内存省很多。只影响脚本自己开的标签页。"""
+    async def handler(route):
+        if route.request.resource_type in ("image", "media", "font"):
+            await route.abort()
+        else:
+            await route.continue_()
+    await page.route("**/*", handler)
+
+
 async def dismiss_cookies(page, log):
     """处理 "Allow the use of cookies from Facebook on this browser?"：点 Decline optional cookies。
     选过一次之后这个窗口就不会再弹。"""

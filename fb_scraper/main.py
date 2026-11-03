@@ -1,4 +1,7 @@
-"""FB 主页数据抓取：比特浏览器窗口 -> 主页列表 -> 关注者数 -> Excel。"""
+"""FB 主页数据抓取。两个功能，由启动的 .bat 决定：
+  FB报白.bat       -> python main.py whitelist：主页名称/ID/链接/粉丝数，填模板表
+  FB播放量情况.bat -> python main.py views：Reels/视频播放量统计
+"""
 import asyncio
 import json
 import random
@@ -19,6 +22,8 @@ from bitbrowser import BitBrowser, BitBrowserError
 BASE = Path(__file__).resolve().parent
 OUT = BASE / "输出"
 PLATFORM = "FaceBook"
+WHITELIST, VIEWS = "whitelist", "views"
+MODE_NAMES = {WHITELIST: "FB报白", VIEWS: "FB播放量情况"}
 
 
 def now():
@@ -28,7 +33,8 @@ def now():
 class Run:
     """一次运行的结果和日志。"""
 
-    def __init__(self, settings, log_path, debug_dir, memory_path):
+    def __init__(self, mode, settings, log_path, debug_dir, memory_path):
+        self.mode = mode
         self.s = settings
         self.rows = []  # (窗口序号, 顺序, 行)
         self.video_rows = []  # (窗口序号, 顺序, 视频统计)
@@ -102,6 +108,8 @@ async def process_window(pw, bb, win, run):
         context = browser.contexts[0] if browser.contexts else await browser.new_context()
         tab = await context.new_page()
         tab.set_default_timeout(s.timeout_s * 1000)
+        if s.light_mode:
+            await fb.lighten(tab)
 
         try:
             account, pages = await fb.collect_pages(tab, s.timeout_s, run.log)
@@ -131,7 +139,10 @@ async def process_window(pw, bb, win, run):
                 await asyncio.sleep(random.uniform(s.wait_min, s.wait_max))
             run.log(f"{tag} ({i + 1}/{len(pages)}) {list_name or pid}")
             try:
-                info = await fb.read_page(tab, pid, list_name, s.timeout_s, run.log)
+                if run.mode == WHITELIST:
+                    await whitelist_page(run, win, tab, account, pid, list_name, i)
+                else:
+                    await views_page(run, win, tab, account, pid, list_name, i)
             except fb.AccountProblem as e:
                 shot = await run.debug(tab, f"窗口{win['seq']}_{e.kind}")
                 for pid2, name2 in pages[i:]:
@@ -141,51 +152,9 @@ async def process_window(pw, bb, win, run):
             except fb.PageProblem as e:
                 shot = await run.debug(tab, f"窗口{win['seq']}_{pid}_{e.kind}")
                 run.problem(win, e.kind, e.detail + shot, account, list_name, pid)
-                continue
             except Exception as e:
                 shot = await run.debug(tab, f"窗口{win['seq']}_{pid}_出错")
                 run.problem(win, "读取出错", f"{type(e).__name__}: {e}{shot}", account, list_name, pid)
-                continue
-
-            name = info["name"] or list_name
-            run.rows.append((win["seq"], i, [
-                excel_talent_id(s.talent_id), PLATFORM, name, pid,
-                fb.public_page_url(pid), info["followers"],
-            ]))
-            if info["approx_text"]:
-                run.problem(win, "粉丝数为约数",
-                            f"主页显示 {info['approx_text']}，没拿到精确数，主表先填了 {info['followers']}",
-                            account, name, pid)
-            else:
-                run.log(f"  ✓ {name}：{info['followers']} followers")
-
-            if s.video_enabled:
-                await asyncio.sleep(random.uniform(s.wait_min, s.wait_max))
-                try:
-                    vids = await videos.read_videos(tab, pid, s.n_reels, s.n_videos, s.timeout_s, run.log)
-                except fb.AccountProblem as e:
-                    shot = await run.debug(tab, f"窗口{win['seq']}_{e.kind}")
-                    run.problem(win, e.kind, e.detail + "（读视频途中出现）" + shot, account, name, pid)
-                    for pid2, name2 in pages[i + 1:]:
-                        run.problem(win, e.kind, e.detail + "（读视频途中出现）" + shot,
-                                    account, name2, pid2)
-                    return
-                except Exception as e:
-                    shot = await run.debug(tab, f"窗口{win['seq']}_{pid}_视频出错")
-                    run.problem(win, "视频读取出错", f"{type(e).__name__}: {e}{shot}", account, name, pid)
-                    continue
-                stats = videos.summarize(vids)
-                run.video_rows.append((win["seq"], i, {
-                    "seq": win["seq"], "window": win["name"], "page_name": name,
-                    "page_id": pid, "followers": info["followers"], "stats": stats,
-                    "new_count": run.new_videos(pid, stats["ids"]),
-                }))
-                run.log(f"  ✓ 视频 {stats['count']} 个，总播放 {stats['total']}，平均 {stats['avg']}")
-                if stats["unknown"]:
-                    shot = await run.debug(tab, f"窗口{win['seq']}_{pid}_播放量没读到")
-                    run.problem(win, "部分播放量没读到",
-                                f"{stats['unknown']} 个视频没读到播放量，没算进统计" + shot,
-                                account, name, pid)
     except Exception as e:
         run.log(traceback.format_exc())
         shot = await run.debug(tab, f"窗口{win['seq']}_出错") if tab else ""
@@ -209,6 +178,41 @@ async def process_window(pw, bb, win, run):
         elif was_open is None:
             run.log(f"{tag} 不确定窗口原来是否开着，为安全起见没有关闭")
         run.log(f"{tag} 结束")
+
+
+async def whitelist_page(run, win, tab, account, pid, list_name, i):
+    """FB报白：主页名称、ID、链接、粉丝数 -> 模板表。"""
+    s = run.s
+    info = await fb.read_page(tab, pid, list_name, s.timeout_s, run.log)
+    name = info["name"] or list_name
+    run.rows.append((win["seq"], i, [
+        excel_talent_id(s.talent_id), PLATFORM, name, pid,
+        fb.public_page_url(pid), info["followers"],
+    ]))
+    if info["approx_text"]:
+        run.problem(win, "粉丝数为约数",
+                    f"主页显示 {info['approx_text']}，没拿到精确数，主表先填了 {info['followers']}",
+                    account, name, pid)
+    else:
+        run.log(f"  ✓ {name}：{info['followers']} followers")
+
+
+async def views_page(run, win, tab, account, pid, list_name, i):
+    """FB播放量情况：Reels/视频播放量，粉丝数直接从标签页顶部读。"""
+    s = run.s
+    name = fb.clean_name(list_name) or pid
+    vids, followers = await videos.read_videos(tab, pid, s.n_reels, s.n_videos, s.timeout_s, run.log)
+    stats = videos.summarize(vids)
+    run.video_rows.append((win["seq"], i, {
+        "seq": win["seq"], "window": win["name"], "page_name": name,
+        "page_id": pid, "followers": followers, "stats": stats,
+        "new_count": run.new_videos(pid, stats["ids"]),
+    }))
+    run.log(f"  ✓ 粉丝 {'没读到' if followers is None else followers}，视频 {stats['count']} 个，总播放 {stats['total']}，平均 {stats['avg']}")
+    if stats["unknown"]:
+        shot = await run.debug(tab, f"窗口{win['seq']}_{pid}_播放量没读到")
+        run.problem(win, "部分播放量没读到",
+                    f"{stats['unknown']} 个视频没读到播放量，没算进统计" + shot, account, name, pid)
 
 
 def excel_talent_id(talent_id):
@@ -236,17 +240,31 @@ def main():
         print(f"设置.txt 有问题：{e}")
         return 1
 
+    mode = sys.argv[1] if len(sys.argv) > 1 else WHITELIST
+    if mode not in MODE_NAMES:
+        print(f"不认识的功能：{mode}（只能是 {WHITELIST} 或 {VIEWS}）")
+        return 1
+
     OUT.mkdir(exist_ok=True)
     (OUT / "日志").mkdir(exist_ok=True)
     today = datetime.now()
     date_str = f"{today.month}月{today.day}"
-    n = excel_out.next_run_number(OUT, date_str)
-    run_name = f"{date_str}_第{n}次"
+    if mode == WHITELIST:
+        n = excel_out.next_run_number(OUT, date_str)
+        run_name = f"{date_str}_第{n}次"
+        log_path = OUT / "日志" / f"{run_name}_日志.txt"
+        problem_path = OUT / f"{run_name}_FB问题.xlsx"
+    else:
+        n = 1
+        while (OUT / "日志" / f"{date_str}_第{n}次_播放量_日志.txt").exists():
+            n += 1
+        run_name = f"{date_str}_第{n}次"
+        log_path = OUT / "日志" / f"{run_name}_播放量_日志.txt"
+        problem_path = OUT / f"{run_name}_播放量问题.xlsx"
     main_path = OUT / f"{run_name}_FB数据.xlsx"
-    problem_path = OUT / f"{run_name}_FB问题.xlsx"
 
-    run = Run(s, OUT / "日志" / f"{run_name}_日志.txt", OUT / "调试" / run_name, OUT / "记录.json")
-    run.log(f"===== 开始：{run_name}，达人id {s.talent_id}，同时开 {s.concurrency} 个窗口 =====")
+    run = Run(mode, s, log_path, OUT / "调试" / f"{run_name}_{MODE_NAMES[mode]}", OUT / "记录.json")
+    run.log(f"===== {MODE_NAMES[mode]} 开始：{run_name}，达人id {s.talent_id}，同时开 {s.concurrency} 个窗口 =====")
 
     bb = BitBrowser(s.api_url, s.api_key)
     try:
@@ -269,16 +287,17 @@ def main():
         stopped = True
         run.log("⚠ 手动中止，已读到的数据照样保存")
 
-    rows = [r for _, _, r in sorted(run.rows, key=lambda x: (x[0], x[1]))]
-    excel_out.write_main(BASE / "模板.xlsx", main_path, rows)
-    run.log(f"主表：{main_path}（{len(rows)} 个主页）")
+    if mode == WHITELIST:
+        rows = [r for _, _, r in sorted(run.rows, key=lambda x: (x[0], x[1]))]
+        excel_out.write_main(BASE / "模板.xlsx", main_path, rows)
+        run.log(f"主表：{main_path}（{len(rows)} 个主页）")
     if run.problems:
         problems = sorted(run.problems, key=lambda p: p["seq"])
         excel_out.write_problems(problem_path, problems)
         run.log(f"问题表：{problem_path}（{len(problems)} 条）")
     else:
         run.log("没有问题，不生成问题表")
-    if s.video_enabled and run.video_rows:
+    if mode == VIEWS and run.video_rows:
         video_rows = [r for _, _, r in sorted(run.video_rows, key=lambda x: (x[0], x[1]))]
         saved = video_excel.write(OUT / "视频播放量统计.xlsx", video_rows)
         run.log(f"视频统计：{saved}（{len(video_rows)} 个主页）")

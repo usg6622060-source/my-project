@@ -7,7 +7,7 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
-title FB page scraper
+title FB views
 
 rem Find a working Python. The Microsoft Store "python" shortcut does not count.
 set PY=
@@ -41,7 +41,7 @@ if errorlevel 1 (
 set "NO_PROXY="
 
 echo [2/2] Running...
-%PY% main.py
+%PY% main.py views
 echo.
 popd
 pause

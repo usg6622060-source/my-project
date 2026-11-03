@@ -79,9 +79,20 @@ async def _tab_is(page, name):
     return any(t.lower().startswith(name.lower()) for t in tabs)
 
 
+async def _followers(page):
+    """标签页顶部也有 "420 followers"，读出来就不用再单独打开主页首页。"""
+    try:
+        text = await page.evaluate(fb.JS_MAIN_TEXT)
+    except Exception:
+        return None
+    m = fb.FOLLOWERS_RE.search(text or "")
+    return fb.parse_count(m.group(1), m.group(2))[0] if m else None
+
+
 async def read_videos(page, page_id, n_reels, n_videos, timeout_s, log):
-    """返回 [(视频ID, 类型, 播放量或None), ...]，已去重。"""
+    """返回 ([(视频ID, 类型, 播放量或None), ...], 粉丝数或None)，视频已去重。"""
     results = {}
+    followers = None
 
     if n_reels > 0:
         await fb.goto(page, f"{fb.FB}/profile.php?id={page_id}&sk=reels_tab", timeout_s)
@@ -89,6 +100,9 @@ async def read_videos(page, page_id, n_reels, n_videos, timeout_s, log):
         await fb.wait_until(page, """() => !!document.querySelector('[role="main"] a[href*="/reel/"]')""",
                             min(15, timeout_s), log)
         await fb.dismiss_welcome(page, log)
+        if fb.UNAVAILABLE_RE.search(await page.evaluate(fb.JS_MAIN_TEXT) or ""):
+            raise fb.PageProblem("主页不可用", "页面显示 This content isn't available（可能被限制或删除）")
+        followers = await _followers(page)
         for vid, views in await _collect(page, 'a[href*="/reel/"]', REEL_ID_RE, n_reels, log):
             results[vid] = ("Reels", views)
 
@@ -102,6 +116,8 @@ async def read_videos(page, page_id, n_reels, n_videos, timeout_s, log):
                 opened = True
                 break
         if opened:
+            if followers is None:
+                followers = await _followers(page)
             await fb.wait_until(
                 page,
                 """() => !!document.querySelector('[role="main"] a[href*="/videos/"], [role="main"] a[href*="watch/?v="]')""",
@@ -114,7 +130,7 @@ async def read_videos(page, page_id, n_reels, n_videos, timeout_s, log):
             # 没有 Videos 标签页（很多主页只发 Reels）时不算错误，只记日志
             log("  这个主页没找到 Videos 标签页，只统计 Reels")
 
-    return [(vid, kind, views) for vid, (kind, views) in results.items()]
+    return [(vid, kind, views) for vid, (kind, views) in results.items()], followers
 
 
 def summarize(videos):
