@@ -15,7 +15,7 @@ HEADERS = (
     + BUCKET_NAMES
     + ["总播放量", "平均播放量", "比上次", "最高播放量", "最高播放量的主页", "新增视频数", "没读到播放量的视频数"]
 )
-WIDTHS = {"检测日期": 12, "最高播放量的主页": 36}
+WIDTHS = {"检测日期": 12, "最高播放量的主页": 48}
 
 GREEN = (PatternFill("solid", fgColor="C6EFCE"), Font(color="006100"))
 RED = (PatternFill("solid", fgColor="FFC7CE"), Font(color="9C0006"))
@@ -59,7 +59,7 @@ def _row(today, page_rows):
             round(total / count, 1) if count else None,
             None,
             best["stats"]["max"] if best else None,
-            f"{best['page_name']}（{best['page_id']}）" if best else "",
+            f"{best['page_name']}（{best['page_id']}）窗口{best['seq']} {best['window']}" if best else "",
             sum(new_counts) if new_counts else None,
             sum(p["stats"]["unknown"] for p in page_rows),
         ]
