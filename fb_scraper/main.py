@@ -12,6 +12,8 @@ from playwright.async_api import async_playwright
 import config
 import excel_out
 import facebook as fb
+import video_excel
+import videos
 from bitbrowser import BitBrowser, BitBrowserError
 
 BASE = Path(__file__).resolve().parent
@@ -29,6 +31,7 @@ class Run:
     def __init__(self, settings, log_path, debug_dir, memory_path):
         self.s = settings
         self.rows = []  # (窗口序号, 顺序, 行)
+        self.video_rows = []  # (窗口序号, 顺序, 视频统计)
         self.problems = []
         self.log_file = open(log_path, "a", encoding="utf-8")
         self.debug_dir = debug_dir
@@ -63,6 +66,13 @@ class Run:
         self.memory_path.write_text(
             json.dumps(self.memory, ensure_ascii=False, indent=1), encoding="utf-8"
         )
+
+    def new_videos(self, page_id, ids):
+        """跟上次比新增了几个视频（第一次检测返回 None），并记住这次的视频。"""
+        seen = self.memory.setdefault("_videos", {})
+        before = seen.get(page_id)
+        seen[page_id] = ids
+        return None if before is None else len(set(ids) - set(before))
 
     async def debug(self, page, label):
         if not self.s.debug_shots or page is None:
@@ -148,6 +158,34 @@ async def process_window(pw, bb, win, run):
                             account, name, pid)
             else:
                 run.log(f"  ✓ {name}：{info['followers']} followers")
+
+            if s.video_enabled:
+                await asyncio.sleep(random.uniform(s.wait_min, s.wait_max))
+                try:
+                    vids = await videos.read_videos(tab, pid, s.n_reels, s.n_videos, s.timeout_s, run.log)
+                except fb.AccountProblem as e:
+                    shot = await run.debug(tab, f"窗口{win['seq']}_{e.kind}")
+                    run.problem(win, e.kind, e.detail + "（读视频途中出现）" + shot, account, name, pid)
+                    for pid2, name2 in pages[i + 1:]:
+                        run.problem(win, e.kind, e.detail + "（读视频途中出现）" + shot,
+                                    account, name2, pid2)
+                    return
+                except Exception as e:
+                    shot = await run.debug(tab, f"窗口{win['seq']}_{pid}_视频出错")
+                    run.problem(win, "视频读取出错", f"{type(e).__name__}: {e}{shot}", account, name, pid)
+                    continue
+                stats = videos.summarize(vids)
+                run.video_rows.append((win["seq"], i, {
+                    "seq": win["seq"], "window": win["name"], "page_name": name,
+                    "page_id": pid, "followers": info["followers"], "stats": stats,
+                    "new_count": run.new_videos(pid, stats["ids"]),
+                }))
+                run.log(f"  ✓ 视频 {stats['count']} 个，总播放 {stats['total']}，平均 {stats['avg']}")
+                if stats["unknown"]:
+                    shot = await run.debug(tab, f"窗口{win['seq']}_{pid}_播放量没读到")
+                    run.problem(win, "部分播放量没读到",
+                                f"{stats['unknown']} 个视频没读到播放量，没算进统计" + shot,
+                                account, name, pid)
     except Exception as e:
         run.log(traceback.format_exc())
         shot = await run.debug(tab, f"窗口{win['seq']}_出错") if tab else ""
@@ -240,6 +278,12 @@ def main():
         run.log(f"问题表：{problem_path}（{len(problems)} 条）")
     else:
         run.log("没有问题，不生成问题表")
+    if s.video_enabled and run.video_rows:
+        video_rows = [r for _, _, r in sorted(run.video_rows, key=lambda x: (x[0], x[1]))]
+        saved = video_excel.write(OUT / "视频播放量统计.xlsx", video_rows)
+        run.log(f"视频统计：{saved}（{len(video_rows)} 个主页）")
+        if saved.name != "视频播放量统计.xlsx":
+            run.log("⚠ 视频播放量统计.xlsx 正在被 Excel 打开，这次另存了一份。下次运行前请先关掉 Excel")
     run.save_memory()
     run.log("===== 中途停止 =====" if stopped else "===== 完成 =====")
     return 0

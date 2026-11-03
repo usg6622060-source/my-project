@@ -16,6 +16,9 @@ class Settings:
     skip_seqs: set = field(default_factory=set)
     timeout_s: int = 60
     debug_shots: bool = True
+    video_enabled: bool = True
+    n_reels: int = 20
+    n_videos: int = 20
 
 
 def _read_text(path):
@@ -80,4 +83,7 @@ def load(path):
     s.skip_seqs = parse_seq_list(values.get("跳过这些窗口序号", ""))
     s.timeout_s = max(10, int(values.get("页面加载超时秒数", "60") or 60))
     s.debug_shots = values.get("保存调试截图", "是") not in ("否", "不", "no", "false", "0")
+    s.video_enabled = values.get("检测视频播放量", "是") not in ("否", "不", "no", "false", "0")
+    s.n_reels = max(0, int(values.get("每个主页检测Reels数量", "20") or 0))
+    s.n_videos = max(0, int(values.get("每个主页检测视频数量", "20") or 0))
     return s
