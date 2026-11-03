@@ -95,6 +95,10 @@ def write(path, page_rows):
     if prev is not None and avg is not None:
         values[DIFF] = round(avg - prev, 1)
     ws.append(values)
+    # 平均播放量和比上次总是显示一位小数，比如 164.0
+    for r in range(2, ws.max_row + 1):
+        for col in (AVG, DIFF):
+            ws.cell(row=r, column=col + 1).number_format = "0.0"
     if prev is not None and avg is not None and avg != prev:
         fill, font = GREEN if avg > prev else RED
         for col in (AVG, DIFF):
