@@ -94,7 +94,7 @@ async def read_videos(page, page_id, n_reels, n_videos, timeout_s, log):
     results = {}
     followers = None
 
-    if n_reels > 0:
+    if n_reels[1] > 0:
         await fb.goto(page, f"{fb.FB}/profile.php?id={page_id}&sk=reels_tab", timeout_s)
         await fb.check_account(page)
         await fb.wait_until(page, """() => !!document.querySelector('[role="main"] a[href*="/reel/"]')""",
@@ -103,10 +103,11 @@ async def read_videos(page, page_id, n_reels, n_videos, timeout_s, log):
         if fb.UNAVAILABLE_RE.search(await page.evaluate(fb.JS_MAIN_TEXT) or ""):
             raise fb.PageProblem("主页不可用", "页面显示 This content isn't available（可能被限制或删除）")
         followers = await _followers(page)
-        for vid, views in await _collect(page, 'a[href*="/reel/"]', REEL_ID_RE, n_reels, log):
+        found = await _collect(page, 'a[href*="/reel/"]', REEL_ID_RE, n_reels[1], log)
+        for vid, views in found[n_reels[0] - 1:]:
             results[vid] = ("Reels", views)
 
-    if n_videos > 0:
+    if n_videos[1] > 0:
         opened = False
         for sk in ("videos_tab", "videos"):
             await fb.goto(page, f"{fb.FB}/profile.php?id={page_id}&sk={sk}", timeout_s)
@@ -123,8 +124,9 @@ async def read_videos(page, page_id, n_reels, n_videos, timeout_s, log):
                 """() => !!document.querySelector('[role="main"] a[href*="/videos/"], [role="main"] a[href*="watch/?v="]')""",
                 min(10, timeout_s), log,
             )
-            for vid, views in await _collect(page, 'a[href*="/videos/"], a[href*="watch/?v="]',
-                                             VIDEO_ID_RE, n_videos, log):
+            found = await _collect(page, 'a[href*="/videos/"], a[href*="watch/?v="]',
+                                   VIDEO_ID_RE, n_videos[1], log)
+            for vid, views in found[n_videos[0] - 1:]:
                 results.setdefault(vid, ("视频", views))
         else:
             # 没有 Videos 标签页（很多主页只发 Reels）时不算错误，只记日志

@@ -17,8 +17,8 @@ class Settings:
     timeout_s: int = 60
     debug_shots: bool = True
     light_mode: bool = True
-    n_reels: int = 20
-    n_videos: int = 20
+    n_reels: tuple = (1, 20)  # 检测第几个到第几个（最新的是第1个），(0, 0) = 不检测
+    n_videos: tuple = (1, 20)
 
 
 def _read_text(path):
@@ -47,6 +47,19 @@ def parse_seq_list(text):
         else:
             raise ValueError(f"窗口序号写法不对：{part!r}（例子：1-3,7）")
     return result
+
+
+def parse_video_range(text, key):
+    """'20' -> (1, 20) 最近20个；'6-10' -> (6, 10) 第6到第10个；'0' -> (0, 0) 不检测。"""
+    text = (text or "0").strip()
+    m = re.fullmatch(r"(\d+)\s*(?:[-~－]\s*(\d+))?", text)
+    if not m:
+        raise ValueError(f"{key} 写法不对：{text!r}（例子：20 或 6-10）")
+    if m.group(2) is None:
+        n = int(m.group(1))
+        return (1, n) if n > 0 else (0, 0)
+    a, b = sorted((int(m.group(1)), int(m.group(2))))
+    return (max(1, a), b) if b > 0 else (0, 0)
 
 
 def load(path):
@@ -84,6 +97,6 @@ def load(path):
     s.timeout_s = max(10, int(values.get("页面加载超时秒数", "60") or 60))
     s.debug_shots = values.get("保存调试截图", "是") not in ("否", "不", "no", "false", "0")
     s.light_mode = values.get("不加载图片和视频", "是") not in ("否", "不", "no", "false", "0")
-    s.n_reels = max(0, int(values.get("每个主页检测Reels数量", "20") or 0))
-    s.n_videos = max(0, int(values.get("每个主页检测视频数量", "20") or 0))
+    s.n_reels = parse_video_range(values.get("每个主页检测Reels数量", "20"), "每个主页检测Reels数量")
+    s.n_videos = parse_video_range(values.get("每个主页检测视频数量", "20"), "每个主页检测视频数量")
     return s
